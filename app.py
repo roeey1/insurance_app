@@ -13,10 +13,11 @@ import tempfile
 import io
 import base64
 
-# --- Configure Google Gemini ---
-client = genai.Client(api_key="AQ.Ab8RN6LlPLaJUM0TJPMO86Fgk1jI4Hcej7uDFNXuszGyDVcW5A")
 
+# שליפת מפתח ה-API מתוך ה-Secrets של סטרימלייט בצורה בטוחה
+api_key = st.secrets.get("GEMINI_API_KEY") if "GEMINI_API_KEY" in st.secrets else os.environ.get("GEMINI_API_KEY")
 
+client = genai.Client(api_key=api_key)
 def extract_policy_members(uploaded_file):
     temp_path = None
     try:
