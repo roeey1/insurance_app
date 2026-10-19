@@ -671,7 +671,7 @@ def compute_all_rates(entry_age, gender, is_smoker, coverage, existing_rates=Non
 
     plans_to_track = [
         "base price", "Risk 10 CLAL", "Risk 15 CLAL", "Risk 15 Menora", "Menora risk 1",
-        "Phenix Risk 15 (30%)", "Phenix Risk 15 (40%)"
+        "Phenix Risk 15 (30%)", "Phenix Risk 15 (40%)", "Phenix Risk 15 (40% 6y)"
     ]
     if existing_rates: plans_to_track.append("Existing Policy")
 
@@ -692,7 +692,7 @@ def compute_all_rates(entry_age, gender, is_smoker, coverage, existing_rates=Non
             target_years.append(y)
 
     if total_policy_years not in target_years:
-        target_years.append(total_policy_years)
+            target_years.append(total_policy_years)
 
     target_years = sorted(target_years)
     target_months = {yr * 12 for yr in target_years if yr > 0}
@@ -752,6 +752,15 @@ def compute_all_rates(entry_age, gender, is_smoker, coverage, existing_rates=Non
         else:
             m_phenix_40 = curr_p
 
+        # --- המסלול החדש: הפניקס 40% ל-6 שנים ---
+        if yr <= 6:
+            m_phenix_40_6y = base_phenix * (1 - 0.40)
+        elif yr <= 15:
+            m_phenix_40_6y = base_phenix
+        else:
+            m_phenix_40_6y = curr_p
+        # ------------------------------------------
+
         costs["base price"] += m_r1
         costs["Risk 10 CLAL"] += m_r10c
         costs["Risk 15 CLAL"] += m_r15c
@@ -759,6 +768,7 @@ def compute_all_rates(entry_age, gender, is_smoker, coverage, existing_rates=Non
         costs["Menora risk 1"] += m_custom
         costs["Phenix Risk 15 (30%)"] += m_phenix_30
         costs["Phenix Risk 15 (40%)"] += m_phenix_40
+        costs["Phenix Risk 15 (40% 6y)"] += m_phenix_40_6y
 
         m_rates_map = {
             "base price": m_r1,
@@ -767,7 +777,8 @@ def compute_all_rates(entry_age, gender, is_smoker, coverage, existing_rates=Non
             "Risk 15 Menora": m_r15m,
             "Menora risk 1": m_custom,
             "Phenix Risk 15 (30%)": m_phenix_30,
-            "Phenix Risk 15 (40%)": m_phenix_40
+            "Phenix Risk 15 (40%)": m_phenix_40,
+            "Phenix Risk 15 (40% 6y)": m_phenix_40_6y
         }
 
         if existing_rates:
@@ -1140,6 +1151,8 @@ elif st.session_state.view_mode == 'results_life':
                       "key": "Existing Policy"})
 
     plans.extend([
+        {"name": "ריסק 15 הפניקס (40% מורחב)", "company": "הפניקס", "badge": "קיבוע ל-15 שנים (40% הנחה ל-6 שנ')",
+         "key": "Phenix Risk 15 (40% 6y)"},
         {"name": "ריסק 15 הפניקס (30%)", "company": "הפניקס", "badge": "קיבוע ל-15 שנים (30% הנחה ל-6 שנ')",
          "key": "Phenix Risk 15 (30%)"},
         {"name": "ריסק 15 הפניקס (40%)", "company": "הפניקס", "badge": "קיבוע ל-15 שנים (40% הנחה ל-4 שנ')",
