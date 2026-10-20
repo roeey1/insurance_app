@@ -1178,16 +1178,20 @@ elif st.session_state.view_mode == 'results_life':
             unsafe_allow_html=True)
 
     with top_col3:
-        if st.button("📄 הצג דוח מלא", type="primary", use_container_width=True):
-            with st.spinner("מכין דוח..."):
-                try:
-                    raw_html = generate_html_report(c, plans, report_title="דוח השוואת ביטוח חיים", max_expiry_age=80)
-                    fd, temp_path = tempfile.mkstemp(suffix=".html")
-                    with os.fdopen(fd, 'wb') as f:
-                        f.write(raw_html)
-                    webbrowser.open(f"file://{temp_path}")
-                except Exception as e:
-                    st.error(f"שגיאה בהפקת הדוח: {e}")
+        # יצירת הדוח רק כשהמשתמש באמת ירצה להוריד, או מראש והצגת כפתור הורדה
+        with st.spinner("מכין דוח..."):
+            try:
+                raw_html = generate_html_report(c, plans, report_title="דוח השוואת ביטוח חיים", max_expiry_age=80)
+                st.download_button(
+                    label="📄 הורד דוח מלא (HTML)",
+                    data=raw_html,
+                    file_name=f"LifeSmart_Report_Life_{entry_age}.html",
+                    mime="text/html",
+                    type="primary",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"שגיאה בהפקת הדוח: {e}")
 
     max_policy_years = max(1, 80 - entry_age)
     y70 = max(0, 70 - entry_age)
@@ -1269,15 +1273,19 @@ elif st.session_state.view_mode == 'results_ci':
             unsafe_allow_html=True)
 
     with top_col3:
-        if st.button("📄 הצג דוח מלא", type="primary", use_container_width=True):
-            with st.spinner("מכין דוח מחלות קשות..."):
-                try:
-                    raw_html = generate_ci_html_report(c, plans, report_title="דוח השוואת ביטוח מחלות קשות", max_expiry_age=75)
-                    fd, temp_path = tempfile.mkstemp(suffix=".html")
-                    with os.fdopen(fd, 'wb') as f: f.write(raw_html)
-                    webbrowser.open(f"file://{temp_path}")
-                except Exception as e:
-                    st.error(f"שגיאה בהפקת הדוח: {e}")
+        with st.spinner("מכין דוח מחלות קשות..."):
+            try:
+                raw_html = generate_ci_html_report(c, plans, report_title="דוח השוואת ביטוח מחלות קשות", max_expiry_age=75)
+                st.download_button(
+                    label="📄 הורד דוח מלא (HTML)",
+                    data=raw_html,
+                    file_name=f"LifeSmart_Report_CI_{entry_age}.html",
+                    mime="text/html",
+                    type="primary",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"שגיאה בהפקת הדוח: {e}")
 
     max_policy_years = max(1, 75 - entry_age)
     y70 = max(0, 70 - entry_age)
