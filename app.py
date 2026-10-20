@@ -1146,7 +1146,8 @@ elif st.session_state.view_mode == 'results_life':
     entry_age = c['age']
 
     plans = []
-    if "Existing Policy" in c['m_rates']:
+    has_existing = "Existing Policy" in c['m_rates']
+    if has_existing:
         plans.append({"name": "הפוליסה הנוכחית", "company": "נתונים מתוך דוח מצורף", "badge": "מצב קיים",
                       "key": "Existing Policy"})
 
@@ -1174,24 +1175,44 @@ elif st.session_state.view_mode == 'results_life':
 
     with top_col2:
         st.markdown(
-            f"<div style='text-align: center; font-weight:700;'>🛡️ כיסוי חיים: <b>₪{c['coverage']:,}</b> &nbsp;|&nbsp; 👤 מבוטח: <b>{c.get('client_name', '')} (גיל {entry_age})</b></div>",
+            f"<div style='text-align: center; font-weight:700; font-size:18px;'>👤 מבוטח: <b>{c.get('client_name', '')} (גיל {entry_age})</b></div>",
             unsafe_allow_html=True)
 
     with top_col3:
-        # יצירת הדוח רק כשהמשתמש באמת ירצה להוריד, או מראש והצגת כפתור הורדה
+        # הפקת דוח
         with st.spinner("מכין דוח..."):
             try:
                 raw_html = generate_html_report(c, plans, report_title="דוח השוואת ביטוח חיים", max_expiry_age=80)
-                st.download_button(
-                    label="📄 הורד דוח מלא (HTML)",
-                    data=raw_html,
-                    file_name=f"LifeSmart_Report_Life_{entry_age}.html",
-                    mime="text/html",
-                    type="primary",
-                    use_container_width=True
-                )
+                st.download_button(label="📄 הורד דוח מלא", data=raw_html,
+                                   file_name=f"LifeSmart_Report_Life_{entry_age}.html", mime="text/html",
+                                   type="primary", use_container_width=True)
             except Exception as e:
                 st.error(f"שגיאה בהפקת הדוח: {e}")
+
+    st.markdown("---")
+
+    # אזור שליטה: סכום ביטוח דינמי וטווח זמן
+    ctrl_col1, ctrl_col2 = st.columns([1, 1.5])
+    with ctrl_col1:
+        new_cov = st.number_input("💰 סכום ביטוח לסימולציה (₪):", min_value=50000, value=int(c['coverage']), step=50000,
+                                  key="cov_upd_life")
+        if new_cov != c['coverage']:
+            ratio = new_cov / c['coverage']
+            # התאמה יחסית של הפוליסה הקיימת לסכום החדש
+            if st.session_state.mem_existing_rates:
+                st.session_state.mem_existing_rates = [r * ratio for r in st.session_state.mem_existing_rates]
+            st.session_state.mem_coverage = new_cov
+
+            # חישוב מחדש של המנוע
+            is_smoker = c['smoker'] == "מעשן"
+            gender_val = "Male" if c['gender'] == "Male" else "Female"
+            cum_res, m_rates = compute_all_rates(entry_age, gender_val, is_smoker, new_cov,
+                                                 st.session_state.mem_existing_rates)
+
+            c['coverage'] = new_cov
+            c['cum_res'] = cum_res
+            c['m_rates'] = m_rates
+            st.rerun()
 
     max_policy_years = max(1, 80 - entry_age)
     y70 = max(0, 70 - entry_age)
@@ -1200,34 +1221,96 @@ elif st.session_state.view_mode == 'results_life':
     horizon_map = {"חודש 1": 1 / 12, "3 שנים": 3, "5 שנים": 5, "10 שנים": 10, "15 שנים": 15}
     if y70 > 0 and y70 < max_policy_years: horizon_map[f"עד גיל 70 ({y70} שנ')"] = y70
     if y75 > 0 and y75 < max_policy_years: horizon_map[f"עד גיל 75 ({y75} שנ')"] = y75
-    horizon_map[f"עד גיל 80 (מצטבר מלא - {max_policy_years} שנ')"] = max_policy_years
+    horizon_map[f"עד גיל 80 ({max_policy_years} שנ')"] = max_policy_years
 
-    selected_horizon = st.radio("טווח זמן לבדיקה:", options=list(horizon_map.keys()), index=4, horizontal=True)
-    h_key = horizon_map[selected_horizon]
+    with ctrl_col2:
+        st.write("")
+        selected_horizon = st.radio("⏳ טווח זמן לבדיקה:", options=list(horizon_map.keys()), index=4, horizontal=True)
+        h_key = horizon_map[selected_horizon]
 
+    st.write("")
+
+    # משיכת העלות הכוללת של הפוליסה הקיימת (לצורך חישוב החיסכון)
+    exist_cum_full = 0
+    lookup_key_base = 1 if h_key == 1 / 12 else int(h_key)
+    if has_existing:
+        exist_rate_full = c['m_rates']["Existing Policy"].get(lookup_key_base,
+                                                              c['m_rates']["Existing Policy"].get(1, 0))
+        exist_cum_full = exist_rate_full if h_key == 1 / 12 else c['cum_res'].get(lookup_key_base, {}).get(
+            "Existing Policy", exist_rate_full * 12 * h_key)
+
+    # יצירת כרטיסיות עם חיסכון ואפשרות לפיצול אחוזים
     for plan in plans:
         lookup_key = 1 if h_key == 1 / 12 else int(h_key)
-        current_monthly_rate = c['m_rates'][plan['key']].get(lookup_key, c['m_rates'][plan['key']].get(1, 0))
+        is_existing = (plan['key'] == "Existing Policy")
 
+        plan_rate = c['m_rates'][plan['key']].get(lookup_key, c['m_rates'][plan['key']].get(1, 0))
+        plan_cum = plan_rate if h_key == 1 / 12 else c['cum_res'].get(lookup_key, {}).get(plan['key'],
+                                                                                          plan_rate * 12 * h_key)
+
+        current_monthly_rate = plan_rate
+        total_cost = plan_cum
+        plan_display_name = plan['name']
+
+        split_pct = 100
+        if not is_existing and has_existing:
+            split_pct = st.slider(f"✂️ אחוז כיסוי שיועבר ל{plan['name']} (השאר יישאר בפוליסה הנוכחית)", min_value=0,
+                                  max_value=100, value=100, step=10, key=f"split_{plan['key']}_life")
+
+            if split_pct < 100:
+                ratio_new = split_pct / 100.0
+                ratio_exist = 1.0 - ratio_new
+
+                exist_rate = c['m_rates']["Existing Policy"].get(lookup_key, c['m_rates']["Existing Policy"].get(1, 0))
+                exist_cum = exist_rate if h_key == 1 / 12 else c['cum_res'].get(lookup_key, {}).get("Existing Policy",
+                                                                                                    exist_rate * 12 * h_key)
+
+                # חישוב רכיבי הפיצול בנפרד
+                cost_new = plan_cum * ratio_new
+                cost_exist = exist_cum * ratio_exist
+                monthly_new = plan_rate * ratio_new
+                monthly_exist = exist_rate * ratio_exist
+
+                current_monthly_rate = monthly_new + monthly_exist
+                total_cost = cost_new + cost_exist
+                plan_display_name = f"{plan['name']} ({split_pct}%) <br><span style='font-size:14px; color:#64748B;'>+ פוליסה נוכחית ({100 - split_pct}%)</span>"
+
+        # חישוב והצגת החיסכון בצבע אדום
+        savings_html = ""
+        if has_existing and not is_existing:
+            savings = exist_cum_full - total_cost
+            if savings > 0:
+                savings_html = f"<div style='color: #EF4444; font-weight: 800; font-size: 16px; margin-top: 8px;'>חיסכון: ₪{savings:,.0f}</div>"
+            elif savings < 0:
+                savings_html = f"<div style='color: #EF4444; font-weight: 800; font-size: 16px; margin-top: 8px;'>תוספת: ₪{abs(savings):,.0f}</div>"
+
+        # בניית הפירוט שיוצג בכרטיסייה
         if h_key == 1 / 12:
-            total_cost = current_monthly_rate
             big_suffix = "/ חודש 1"
-            subtext = "פרמיה התחלתית"
+            if split_pct == 100:
+                subtext = "פרמיה התחלתית"
+            else:
+                subtext = f"פירוט חודשי: ₪{monthly_new:,.0f} בחלופה זו + ₪{monthly_exist:,.0f} בנוכחית"
         else:
-            total_cost = c['cum_res'].get(lookup_key, {}).get(plan['key'], current_monthly_rate * 12 * h_key)
             big_suffix = f"/ סה״כ ל-{selected_horizon}"
-            subtext = f"פרמיה חודשית (בשנה {lookup_key}): ₪{current_monthly_rate:,.1f}"
+            if split_pct == 100:
+                subtext = f"פרמיה חודשית (בשנה {lookup_key}): ₪{current_monthly_rate:,.1f}"
+            else:
+                subtext = f"פירוט מצטבר: ₪{cost_new:,.0f} בחלופה זו + ₪{cost_exist:,.0f} בנוכחית<br><span style='font-size:13.5px; font-weight:600; color:#334155;'>פרמיה חודשית (שנה {lookup_key}): ₪{monthly_new:,.0f} לחלופה + ₪{monthly_exist:,.0f} לנוכחית</span>"
 
         st.markdown(f"""
-        <div class='deal-card'>
-            <div><span class='pill-badge'>{plan['badge']}</span></div>
-            <div style='text-align: center;'>
+        <div class='deal-card' style='display: flex; justify-content: space-between; align-items: center; direction: rtl;'>
+            <div style='text-align: right; flex: 1.2;'>
+                <div style='font-size: 19px; font-weight: 800; color: #1E293B;'>{plan_display_name}</div>
+                <div style='font-size: 13px; color: #64748B;'>{plan['company']}</div>
+            </div>
+            <div style='text-align: center; flex: 1.5;'>
                 <div class='deal-price'>₪{total_cost:,.0f} <span style='font-size:16px; color:#64748B;'>{big_suffix}</span></div>
                 <div class='deal-subprice'>{subtext}</div>
             </div>
-            <div style='text-align: left;'>
-                <div style='font-size: 19px; font-weight: 800; color: #1E293B;'>{plan['name']}</div>
-                <div style='font-size: 13px; color: #64748B;'>{plan['company']}</div>
+            <div style='text-align: left; flex: 1;'>
+                <div><span class='pill-badge'>{plan['badge']}</span></div>
+                {savings_html}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1239,17 +1322,18 @@ elif st.session_state.view_mode == 'results_life':
 elif st.session_state.view_mode == 'results_ci':
     c = st.session_state.calc_data
     entry_age = c['age']
-    coverage = c['coverage']
+    current_cov = c['coverage']
 
     plans = []
-    if "Existing Policy" in c['m_rates']:
+    has_existing = "Existing Policy" in c['m_rates']
+    if has_existing:
         plans.append({"name": "הפוליסה הנוכחית", "company": "נתונים מתוך דוח מצורף", "badge": "מצב קיים",
                       "key": "Existing Policy"})
 
     plans.append({"name": "איילון בשביל החוסן - מבצע מיוחד (40%)", "company": "איילון חברה לביטוח",
                   "badge": "40% הנחה ל-10 שנים", "key": "Ayalon CI - 40%"})
 
-    if coverage < 250000:
+    if current_cov < 250000:
         plans.append(
             {"name": "איילון בשביל החוסן - רגיל (30%)", "company": "איילון חברה לביטוח", "badge": "30% הנחה ל-10 שנים",
              "key": "Ayalon CI - 30%"})
@@ -1269,57 +1353,136 @@ elif st.session_state.view_mode == 'results_ci':
 
     with top_col2:
         st.markdown(
-            f"<div style='text-align: center; font-weight:700;'>🩺 כיסוי מחלות קשות: <b>₪{c['coverage']:,}</b> &nbsp;|&nbsp; 👤 מבוטח: <b>{c.get('client_name', '')} (גיל {entry_age})</b></div>",
+            f"<div style='text-align: center; font-weight:700; font-size:18px;'>👤 מבוטח: <b>{c.get('client_name', '')} (גיל {entry_age})</b></div>",
             unsafe_allow_html=True)
 
     with top_col3:
         with st.spinner("מכין דוח מחלות קשות..."):
             try:
-                raw_html = generate_ci_html_report(c, plans, report_title="דוח השוואת ביטוח מחלות קשות", max_expiry_age=75)
-                st.download_button(
-                    label="📄 הורד דוח מלא (HTML)",
-                    data=raw_html,
-                    file_name=f"LifeSmart_Report_CI_{entry_age}.html",
-                    mime="text/html",
-                    type="primary",
-                    use_container_width=True
-                )
+                raw_html = generate_ci_html_report(c, plans, report_title="דוח השוואת ביטוח מחלות קשות",
+                                                   max_expiry_age=75)
+                st.download_button(label="📄 הורד דוח מלא", data=raw_html,
+                                   file_name=f"LifeSmart_Report_CI_{entry_age}.html", mime="text/html", type="primary",
+                                   use_container_width=True)
             except Exception as e:
                 st.error(f"שגיאה בהפקת הדוח: {e}")
+
+    st.markdown("---")
+
+    # אזור שליטה: סכום ביטוח דינמי וטווח זמן
+    ctrl_col1, ctrl_col2 = st.columns([1, 1.5])
+    with ctrl_col1:
+        new_cov = st.number_input("💰 סכום ביטוח לסימולציה (₪):", min_value=50000, value=int(current_cov), step=50000,
+                                  key="cov_upd_ci")
+        if new_cov != current_cov:
+            ratio = new_cov / current_cov
+            if st.session_state.mem_existing_rates:
+                st.session_state.mem_existing_rates = [r * ratio for r in st.session_state.mem_existing_rates]
+            st.session_state.mem_coverage = new_cov
+
+            is_smoker = c['smoker'] == "מעשן"
+            gender_val = "Male" if c['gender'] == "Male" else "Female"
+            cum_res, m_rates = compute_ci_rates(entry_age, gender_val, is_smoker, new_cov,
+                                                st.session_state.mem_existing_rates)
+
+            c['coverage'] = new_cov
+            c['cum_res'] = cum_res
+            c['m_rates'] = m_rates
+            st.rerun()
 
     max_policy_years = max(1, 75 - entry_age)
     y70 = max(0, 70 - entry_age)
 
     horizon_map = {"חודש 1": 1 / 12, "10 שנים": 10, "15 שנים": 15}
     if y70 > 0 and y70 < max_policy_years: horizon_map[f"עד גיל 70 ({y70} שנ')"] = y70
-    horizon_map[f"עד גיל 75 (מצטבר מלא - {max_policy_years} שנ')"] = max_policy_years
+    horizon_map[f"עד גיל 75 ({max_policy_years} שנ')"] = max_policy_years
 
-    selected_horizon = st.radio("טווח זמן לבדיקה:", options=list(horizon_map.keys()), index=4, horizontal=True)
-    h_key = horizon_map[selected_horizon]
+    with ctrl_col2:
+        st.write("")
+        selected_horizon = st.radio("⏳ טווח זמן לבדיקה:", options=list(horizon_map.keys()), index=len(horizon_map) - 1,
+                                    horizontal=True)
+        h_key = horizon_map[selected_horizon]
+
+    st.write("")
+
+    # משיכת העלות הכוללת של הפוליסה הקיימת (לצורך חישוב החיסכון)
+    exist_cum_full = 0
+    lookup_key_base = 1 if h_key == 1 / 12 else int(h_key)
+    if has_existing:
+        exist_rate_full = c['m_rates']["Existing Policy"].get(lookup_key_base,
+                                                              c['m_rates']["Existing Policy"].get(1, 0))
+        exist_cum_full = exist_rate_full if h_key == 1 / 12 else c['cum_res'].get(lookup_key_base, {}).get(
+            "Existing Policy", exist_rate_full * 12 * h_key)
 
     for plan in plans:
         lookup_key = 1 if h_key == 1 / 12 else int(h_key)
-        current_monthly_rate = c['m_rates'][plan['key']].get(lookup_key, c['m_rates'][plan['key']].get(1, 0))
+        is_existing = (plan['key'] == "Existing Policy")
+
+        plan_rate = c['m_rates'][plan['key']].get(lookup_key, c['m_rates'][plan['key']].get(1, 0))
+        plan_cum = plan_rate if h_key == 1 / 12 else c['cum_res'].get(lookup_key, {}).get(plan['key'],
+                                                                                          plan_rate * 12 * h_key)
+
+        current_monthly_rate = plan_rate
+        total_cost = plan_cum
+        plan_display_name = plan['name']
+
+        split_pct = 100
+        if not is_existing and has_existing:
+            split_pct = st.slider(f"✂️ אחוז כיסוי שיועבר ל{plan['company']} (השאר יישאר בפוליסה הנוכחית)", min_value=0,
+                                  max_value=100, value=100, step=10, key=f"split_{plan['key']}_ci")
+
+            if split_pct < 100:
+                ratio_new = split_pct / 100.0
+                ratio_exist = 1.0 - ratio_new
+
+                exist_rate = c['m_rates']["Existing Policy"].get(lookup_key, c['m_rates']["Existing Policy"].get(1, 0))
+                exist_cum = exist_rate if h_key == 1 / 12 else c['cum_res'].get(lookup_key, {}).get("Existing Policy",
+                                                                                                    exist_rate * 12 * h_key)
+
+                cost_new = plan_cum * ratio_new
+                cost_exist = exist_cum * ratio_exist
+                monthly_new = plan_rate * ratio_new
+                monthly_exist = exist_rate * ratio_exist
+
+                current_monthly_rate = monthly_new + monthly_exist
+                total_cost = cost_new + cost_exist
+                plan_display_name = f"{plan['name']} ({split_pct}%) <br><span style='font-size:14px; color:#64748B;'>+ פוליסה נוכחית ({100 - split_pct}%)</span>"
+
+        # חישוב והצגת החיסכון בצבע אדום
+        savings_html = ""
+        if has_existing and not is_existing:
+            savings = exist_cum_full - total_cost
+            if savings > 0:
+                savings_html = f"<div style='color: #EF4444; font-weight: 800; font-size: 16px; margin-top: 8px;'>חיסכון: ₪{savings:,.0f}</div>"
+            elif savings < 0:
+                savings_html = f"<div style='color: #EF4444; font-weight: 800; font-size: 16px; margin-top: 8px;'>תוספת: ₪{abs(savings):,.0f}</div>"
 
         if h_key == 1 / 12:
-            total_cost = current_monthly_rate
             big_suffix = "/ חודש 1"
-            subtext = "פרמיה התחלתית"
+            if split_pct == 100:
+                subtext = "פרמיה התחלתית"
+            else:
+                subtext = f"פירוט חודשי: ₪{monthly_new:,.0f} בחלופה זו + ₪{monthly_exist:,.0f} בנוכחית"
         else:
-            total_cost = c['cum_res'].get(lookup_key, {}).get(plan['key'], current_monthly_rate * 12 * h_key)
             big_suffix = f"/ סה״כ ל-{selected_horizon}"
-            subtext = f"פרמיה חודשית (בשנה {lookup_key}): ₪{current_monthly_rate:,.1f}"
+            if split_pct == 100:
+                subtext = f"פרמיה חודשית (בשנה {lookup_key}): ₪{current_monthly_rate:,.1f}"
+            else:
+                subtext = f"פירוט מצטבר: ₪{cost_new:,.0f} בחלופה זו + ₪{cost_exist:,.0f} בנוכחית<br><span style='font-size:13.5px; font-weight:600; color:#334155;'>פרמיה חודשית (שנה {lookup_key}): ₪{monthly_new:,.0f} לחלופה + ₪{monthly_exist:,.0f} לנוכחית</span>"
 
         st.markdown(f"""
-        <div class='deal-card'>
-            <div><span class='pill-badge'>{plan['badge']}</span></div>
-            <div style='text-align: center;'>
+        <div class='deal-card' style='display: flex; justify-content: space-between; align-items: center; direction: rtl;'>
+            <div style='text-align: right; flex: 1.2;'>
+                <div style='font-size: 19px; font-weight: 800; color: #1E293B;'>{plan_display_name}</div>
+                <div style='font-size: 13px; color: #64748B;'>{plan['company']}</div>
+            </div>
+            <div style='text-align: center; flex: 1.5;'>
                 <div class='deal-price'>₪{total_cost:,.0f} <span style='font-size:16px; color:#64748B;'>{big_suffix}</span></div>
                 <div class='deal-subprice'>{subtext}</div>
             </div>
-            <div style='text-align: left;'>
-                <div style='font-size: 19px; font-weight: 800; color: #1E293B;'>{plan['name']}</div>
-                <div style='font-size: 13px; color: #64748B;'>{plan['company']}</div>
+            <div style='text-align: left; flex: 1;'>
+                <div><span class='pill-badge'>{plan['badge']}</span></div>
+                {savings_html}
             </div>
         </div>
         """, unsafe_allow_html=True)
